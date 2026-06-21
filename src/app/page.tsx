@@ -50,6 +50,7 @@ export default function Dashboard() {
   const [message, setMessage] = useState('')
   const [vault, setVault] = useState({ principal: 1000, yield: 50, total: 1050, yieldPct: '4.8' })
   const [worstCase, setWorstCase] = useState('')
+  const [mode, setMode] = useState<'demo' | 'live'>('demo')
 
   const addAuditEntry = useCallback((entry: Omit<AuditEntry, 'id' | 'timestamp'>) => {
     setAuditLog(prev => [{
@@ -79,7 +80,7 @@ export default function Dashboard() {
       const res = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'curate' }),
+        body: JSON.stringify({ action: 'curate', mode }),
       })
       const data = await res.json()
 
@@ -105,7 +106,7 @@ export default function Dashboard() {
       setMessage(`Error: ${err.message}`)
     }
     setLoading(false)
-  }, [addAuditEntry])
+  }, [addAuditEntry, mode])
 
   const executeTransfer = useCallback(async (amount: number, toAddress: string, reason: string) => {
     setLoading(true)
@@ -116,6 +117,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'execute',
+          mode,
           toolMethod: 'transfer_hbar_tool',
           toolParams: { reason, transfers: [{ accountId: toAddress, amount }] },
         }),
@@ -149,12 +151,12 @@ export default function Dashboard() {
 
       addAuditEntry({ tool: 'transfer_hbar_tool', params: `${amount} HBAR → ${toAddress}`, result: 'allowed', reason })
       if (data.vault) setVault(data.vault)
-      setMessage('Transfer succeeded')
+      setMessage(mode === 'demo' ? 'Transfer simulated (demo mode)' : 'Transfer succeeded')
     } catch (err: any) {
       setMessage(`Error: ${err.message}`)
     }
     setLoading(false)
-  }, [addAuditEntry, blockPolicy])
+  }, [addAuditEntry, blockPolicy, mode])
 
   const getCategoryColor = (cat: string) => {
     switch (cat) {
@@ -173,9 +175,35 @@ export default function Dashboard() {
           <p className="text-sm text-slate-400">Policy-Governed Liquidity Curation Agent</p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center bg-slate-800 rounded-lg p-0.5 border border-slate-700">
+            <button
+              onClick={() => setMode('demo')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                mode === 'demo'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              ⚡ Demo
+            </button>
+            <button
+              onClick={() => setMode('live')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                mode === 'live'
+                  ? 'bg-green-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Live
+            </button>
+          </div>
           <span className="status-dot active"></span>
           <span className="text-sm text-slate-300">Agent Online</span>
-          <span className="text-xs text-slate-500 px-2 py-1 bg-slate-800 rounded">Hedera Testnet</span>
+          <span className={`text-xs px-2 py-1 rounded ${
+            mode === 'demo' ? 'bg-amber-900/40 text-amber-400' : 'bg-green-900/40 text-green-400'
+          }`}>
+            {mode === 'demo' ? 'Demo Mode' : 'Hedera Testnet'}
+          </span>
         </div>
       </header>
 
@@ -238,7 +266,7 @@ export default function Dashboard() {
 
           <div>
             <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              Audit Trail <span className="text-xs text-slate-400 font-normal">HCS-backed immutable log</span>
+              Audit Trail <span className="text-xs text-slate-400 font-normal">Immutable event log</span>
             </h2>
             <div className="policy-card max-h-64 overflow-y-auto">
               {auditLog.length === 0 ? (
@@ -343,7 +371,7 @@ export default function Dashboard() {
               <p>Min Reason Length: <span className="text-slate-200">10 chars</span></p>
               <p>Benchmark APY: <span className="text-slate-200">5%</span></p>
               <p>Whitelisted: <span className="text-slate-200">0.0.1001, 0.0.1002</span></p>
-              <p>Network: <span className="text-slate-200">Hedera Testnet</span></p>
+              <p>Network: <span className="text-slate-200">{mode === 'demo' ? 'Simulated' : 'Hedera Testnet'}</span></p>
             </div>
           </div>
         </div>

@@ -23,6 +23,14 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const action = body.action as string
+    const mode = body.mode as string
+    const isDemoMode = mode === 'demo'
+
+    const allowedPools = getAllowedPools()
+
+    if (isDemoMode) {
+      return handleDemo(action, body, allowedPools)
+    }
 
     const operatorId = process.env.HEDERA_OPERATOR_ID
     const operatorKey = process.env.HEDERA_OPERATOR_KEY
@@ -40,10 +48,9 @@ export async function POST(req: NextRequest) {
       PrivateKey.fromStringECDSA(operatorKey),
     )
 
-    const allowedPools = getAllowedPools()
     const auditTopicId = getHcsTopicId()
 
-    const policies = [
+    const policies: any[] = [
       new PoolWhitelistPolicy(allowedPools),
       new MaxPositionPolicy(),
       new DailySpendPolicy(),
@@ -147,4 +154,90 @@ export async function POST(req: NextRequest) {
     const message = err?.message || String(err)
     return NextResponse.json({ error: message }, { status: 500 })
   }
+}
+
+async function handleDemo(action: string, body: any, allowedPools: string[]) {
+  if (action === 'curate') {
+    const vaultStatus = vault.getStatus()
+    const decision = await getCurationDecision(
+      body.marketData || 'Current HBAR price: $0.089, 24h volume: $36M',
+      body.positionState || `Position: HBAR/USDC, Vault: ${vaultStatus.total} HBAR (${vaultStatus.yieldPct}% yield)`,
+    )
+
+    vault.spend(50)
+
+    return NextResponse.json({
+      success: true,
+      decision,
+      vault: vault.getStatus(),
+      spendCheck: 'Demo mode — simulation active (no real HBAR)',
+      toolsAvailable: ['transfer_hbar_tool', 'transfer_fungible_token_with_allowance_tool'],
+      worstCase: `Agent CAN spend up to ${vaultStatus.yield} HBAR from yield. Agent CANNOT access ${vaultStatus.principal} HBAR principal. Agent CANNOT transfer to non-whitelisted pools. MAX single tx: 500 HBAR. MAX daily spend: 100 HBAR.`,
+    })
+  }
+
+  if (action === 'execute') {
+    const toolMethod = body.toolMethod as string
+    const toolParams = body.toolParams as Record<string, unknown>
+
+    const dangerousTools = ['delete_account_tool', 'delete_token_tool', 'freeze_token_tool']
+    if (dangerousTools.includes(toolMethod)) {
+      return NextResponse.json(
+        { error: 'Blocked by Reject Tool Policy: dangerous operation' },
+        { status: 400 },
+      )
+    }
+
+    const reason = (toolParams.reason as string) || ''
+    const rawTransfers = toolParams.transfers as Array<Record<string, unknown>> | undefined
+
+    if (rawTransfers) {
+      for (const t of rawTransfers) {
+        const amount = Number(t.amount || 0)
+        const toAddress = t.accountId as string
+
+        if (amount > 0) {
+          if (!reason || reason.length < 10) {
+            return NextResponse.json(
+              { error: `Blocked by Intent Reason Policy: reason must be at least 10 characters (got ${reason.length})` },
+              { status: 400 },
+            )
+          }
+
+          if (amount > 500) {
+            return NextResponse.json(
+              { error: `Blocked by Max Position Policy: amount ${amount} HBAR exceeds maximum of 500 HBAR per position` },
+              { status: 400 },
+            )
+          }
+
+          if (!allowedPools.includes(toAddress)) {
+            return NextResponse.json(
+              { error: `Blocked by Pool Whitelist Policy: ${toAddress} is not in the approved pool list` },
+              { status: 400 },
+            )
+          }
+
+          const vaultCheck = vault.spend(amount)
+          if (!vaultCheck.allowed) {
+            return NextResponse.json(
+              { error: `Blocked by Principal Protection: ${vaultCheck.reason}` },
+              { status: 400 },
+            )
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      result: { status: 'SIMULATED', message: 'Demo mode — no real HBAR transferred. All policy checks passed.' },
+      vault: vault.getStatus(),
+    })
+  }
+
+  return NextResponse.json(
+    { error: `Unknown action: ${action}` },
+    { status: 400 },
+  )
 }
